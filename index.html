@@ -19,6 +19,9 @@ h2{font-size:14px;color:var(--sub);margin:0 0 8px;font-weight:600}
 .big{font-size:20px;font-weight:700;padding:18px 0;border:0;border-radius:14px;color:#fff;background:var(--ac)}
 .big.end{background:#3a5bd9}
 .big:active{opacity:.7}
+.save{display:block;width:100%;font-size:20px;font-weight:700;padding:16px 0;border:0;border-radius:14px;color:#fff;background:var(--ac);margin:0 0 10px}
+.save:active{opacity:.7}
+.save:disabled{opacity:.4}
 input,textarea{font:inherit;color:var(--tx);background:var(--bg);border:1px solid var(--bd);border-radius:8px;padding:6px 8px;max-width:100%}
 input[type=number]{width:80px}
 button.s{font:inherit;color:var(--tx);background:var(--bg);border:1px solid var(--bd);border-radius:8px;padding:6px 12px}
@@ -26,6 +29,10 @@ button.s{font:inherit;color:var(--tx);background:var(--bg);border:1px solid var(
 .sub{color:var(--sub);font-size:13px}
 .ot{font-weight:700;font-variant-numeric:tabular-nums}
 .pos{color:var(--ng)}.neg{color:var(--sub)}
+.stat{font-size:14px;margin:0;min-height:21px}
+.stat.dirty{color:var(--ng);font-weight:600}
+.stat.ok{color:var(--ac);font-weight:600}
+.stat.err{color:var(--ng);font-weight:700}
 .list{overflow-x:auto}
 table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
 td,th{padding:7px 4px;border-bottom:1px solid var(--bd);text-align:right;font-size:14px}
@@ -35,6 +42,12 @@ textarea{width:100%;height:90px}
 </style></head><body><main>
 
 <div class="card">
+  <h2>今期の残業合計</h2>
+  <div class="sum" id="curTot">0:00</div>
+  <div class="sub" id="curInfo"></div>
+</div>
+
+<div class="card">
   <h2>記録する日</h2>
   <input type="date" id="sel">
   <div class="btns">
@@ -42,7 +55,9 @@ textarea{width:100%;height:90px}
     <button class="big end" id="bEnd">退勤</button>
   </div>
   <div class="row">帰社 <input type="time" id="tOut"> 退勤 <input type="time" id="tEnd"></div>
-  <p class="sub" id="dayRes" style="margin:10px 0 0"></p>
+  <p class="sub" id="dayRes" style="margin:10px 0"></p>
+  <button class="save" id="bSave">保存</button>
+  <p class="stat" id="saveMsg"></p>
 </div>
 
 <div class="card">
@@ -64,7 +79,6 @@ textarea{width:100%;height:90px}
 <div class="card">
   <h2>書き出し（表示中の期間）</h2>
   <div class="row">
-    <button class="s" id="bDl">CSVを保存</button>
     <button class="s" id="bCsv">CSVをコピー</button>
     <button class="s" id="bTsv">表貼り付け用コピー</button>
   </div>
@@ -87,11 +101,20 @@ textarea{width:100%;height:90px}
 var K='zangyo-v1';
 var D={s:{fin:1065},d:{}};
 try{var r=localStorage.getItem(K);if(r){var p=JSON.parse(r);D.s=Object.assign(D.s,p.s||{});D.d=p.d||{}}}catch(e){}
-function save(){try{localStorage.setItem(K,JSON.stringify(D))}catch(e){}}
+// 保存して、実際に読み戻して一致を確認する
+function persist(){
+  try{
+    var s=JSON.stringify(D);
+    localStorage.setItem(K,s);
+    return localStorage.getItem(K)===s;
+  }catch(e){return false}
+}
 function $(i){return document.getElementById(i)}
 function pad(n){return String(n).padStart(2,'0')}
 function key(t){return t.getFullYear()+'-'+pad(t.getMonth()+1)+'-'+pad(t.getDate())}
+function md(k){return (+k.slice(5,7))+'/'+(+k.slice(8))}
 function nowHM(){var t=new Date();return pad(t.getHours())+':'+pad(t.getMinutes())}
+function nowHMS(){var t=new Date();return nowHM()+':'+pad(t.getSeconds())}
 function tm(s){var a=s.split(':');return +a[0]*60+ +a[1]}
 function hm(m){return Math.floor(m/60)+':'+pad(m%60)}
 function sg(m){return (m<0?'−':'+')+hm(Math.abs(m))}
@@ -101,46 +124,102 @@ function calc(e){
   if(e.out&&tm(e.out)>s)s=tm(e.out);
   return {s:s,ot:Math.max(0,tm(e.end)-s)};
 }
-var sel=key(new Date());
+
+// 20日締め：21日〜翌20日が1期間
 function closeOf(t){return new Date(t.getFullYear(),t.getMonth()+(t.getDate()>20?1:0),1)}
+function rangeFor(v){var y=v.getFullYear(),m=v.getMonth();return [key(new Date(y,m-1,21)),key(new Date(y,m,20))]}
+function keysIn(r){return Object.keys(D.d).filter(function(k){return k>=r[0]&&k<=r[1]}).sort()}
+function totalIn(r){
+  var t=0;
+  keysIn(r).forEach(function(k){var c=calc(D.d[k]);if(c&&c.ot>0)t+=c.ot});
+  return t;
+}
+
+var sel=key(new Date());
 var vm=closeOf(new Date());
-function range(){var y=vm.getFullYear(),m=vm.getMonth();return [key(new Date(y,m-1,21)),key(new Date(y,m,20))]}
-function pk(){var r=range();return Object.keys(D.d).filter(function(k){return k>=r[0]&&k<=r[1]}).sort()}
+var dr={out:'',end:''};      // 入力中（未保存）の値
+var lastSave=null;           // 直近の保存結果
+
+function loadDraft(){var e=D.d[sel]||{};dr={out:e.out||'',end:e.end||''}}
+function dirty(){var e=D.d[sel]||{};return dr.out!==(e.out||'')||dr.end!==(e.end||'')}
 
 function render(){
   $('sel').value=sel;
-  var e=D.d[sel]||{};
-  $('tOut').value=e.out||'';$('tEnd').value=e.end||'';
-  var c=calc(e);
-  $('dayRes').textContent=c?('残業の起点 '+hm(c.s)+' / 残業 '+sg(c.ot)):'退勤を記録すると計算されます';
-  var r=range(),ks=pk().reverse();
+  $('tOut').value=dr.out;$('tEnd').value=dr.end;
+
+  // 今期（今日が属する締め期間）の合計
+  var now=new Date(),cm=closeOf(now),cr=rangeFor(cm);
+  var t0=new Date(now.getFullYear(),now.getMonth(),now.getDate());
+  var n=Math.round((new Date(cm.getFullYear(),cm.getMonth(),20)-t0)/864e5);
+  $('curTot').textContent=hm(totalIn(cr));
+  $('curInfo').textContent=md(cr[0])+' 〜 '+md(cr[1])+'（20日締め）／'+(n===0?'本日が締め日':'締めまであと'+n+'日')+'／保存済みの記録のみ集計';
+
+  // 入力中の内容でプレビュー
+  var c=calc(dr);
+  $('dayRes').textContent=c?('残業の起点 '+hm(c.s)+' / 残業 '+sg(c.ot)):'退勤を入力すると計算されます';
+
+  // 保存ボタンと状態表示
+  var d=dirty(),st=$('saveMsg');
+  $('bSave').disabled=!d;
+  if(d){st.className='stat dirty';st.textContent='未保存の変更があります。「保存」を押してください'}
+  else if(lastSave&&lastSave.k===sel){
+    if(lastSave.ok){st.className='stat ok';st.textContent='✓ '+md(sel)+' を保存しました（'+lastSave.t+'）'}
+    else{st.className='stat err';st.textContent='✕ 保存に失敗しました。ブラウザの設定（プライベートブラウズ等）を確認してください'}
+  }
+  else if(D.d[sel]){st.className='stat ok';st.textContent='✓ 保存済み'}
+  else{st.className='stat';st.textContent=''}
+
+  // 表示中の期間（‹ › で切り替え）
+  var r=rangeFor(vm),ks=keysIn(r).reverse();
   $('ym').textContent=vm.getFullYear()+'年'+(vm.getMonth()+1)+'月20日締め';
-  $('rg').textContent=r[0].slice(5).replace('-','/')+' 〜 '+r[1].slice(5).replace('-','/');
+  $('rg').textContent=md(r[0])+' 〜 '+md(r[1]);
   var tot=0,h='';
   ks.forEach(function(k){
     var x=D.d[k],cc=calc(x);
     if(cc&&cc.ot>0)tot+=cc.ot;
-    h+='<tr data-k="'+k+'"'+(k===sel?' class="me"':'')+'><td>'+(+k.slice(5,7))+'/'+(+k.slice(8))+'</td><td>'+(x.out||'–')+'</td><td>'+(x.end||'–')+'</td><td>'+(cc?hm(cc.s):'–')+'</td><td class="ot '+(cc&&cc.ot>0?'pos':'neg')+'">'+(cc?sg(cc.ot):'–')+'</td></tr>';
+    h+='<tr data-k="'+k+'"'+(k===sel?' class="me"':'')+'><td>'+md(k)+'</td><td>'+(x.out||'–')+'</td><td>'+(x.end||'–')+'</td><td>'+(cc?hm(cc.s):'–')+'</td><td class="ot '+(cc&&cc.ot>0?'pos':'neg')+'">'+(cc?sg(cc.ot):'–')+'</td></tr>';
   });
   $('rows').innerHTML=h||'<tr><td colspan="5" class="sub">記録がありません</td></tr>';
   $('tot').textContent=hm(tot);
   $('sFin').value=pad(Math.floor(D.s.fin/60))+':'+pad(D.s.fin%60);
 }
-function setF(f,v){
-  var e=D.d[sel]||{};
-  if(v)e[f]=v;else delete e[f];
-  if(e.out||e.end)D.d[sel]=e;else delete D.d[sel];
-  save();render();
+
+function setDraft(f,v){dr[f]=v||'';render()}
+function go(k,keepView){
+  if(dirty()&&!confirm('保存していない変更があります。破棄して移動しますか？')){render();return false}
+  sel=k;
+  if(!keepView)vm=closeOf(new Date(k+'T00:00:00'));
+  loadDraft();render();return true;
 }
-$('bOut').onclick=function(){setF('out',nowHM())};
-$('bEnd').onclick=function(){setF('end',nowHM())};
-$('tOut').onchange=function(){setF('out',this.value)};
-$('tEnd').onchange=function(){setF('end',this.value)};
-$('sel').onchange=function(){if(this.value){sel=this.value;vm=closeOf(new Date(sel+'T00:00:00'));render()}};
+function commit(){
+  if(!dirty())return;
+  var e={};
+  if(dr.out)e.out=dr.out;
+  if(dr.end)e.end=dr.end;
+  var prev=D.d[sel];
+  if(e.out||e.end)D.d[sel]=e;else delete D.d[sel];
+  var ok=persist();
+  if(!ok){
+    // 失敗時は画面上の記録を元に戻し、入力中の値は残す
+    if(prev)D.d[sel]=prev;else delete D.d[sel];
+  }
+  lastSave={k:sel,ok:ok,t:nowHMS()};
+  render();
+}
+
+$('bOut').onclick=function(){setDraft('out',nowHM())};
+$('bEnd').onclick=function(){setDraft('end',nowHM())};
+$('tOut').onchange=function(){setDraft('out',this.value)};
+$('tEnd').onchange=function(){setDraft('end',this.value)};
+$('bSave').onclick=commit;
+$('sel').onchange=function(){if(this.value)go(this.value,false);else render()};
 $('prev').onclick=function(){vm.setMonth(vm.getMonth()-1);render()};
 $('next').onclick=function(){vm.setMonth(vm.getMonth()+1);render()};
-$('rows').onclick=function(ev){var tr=ev.target.closest('tr');if(tr&&tr.dataset.k){sel=tr.dataset.k;render();window.scrollTo(0,0)}};
-$('sFin').onchange=function(){if(this.value){D.s.fin=tm(this.value);save();render()}};
+$('rows').onclick=function(ev){
+  var tr=ev.target.closest('tr');
+  if(tr&&tr.dataset.k&&go(tr.dataset.k,true))window.scrollTo(0,0);
+};
+$('sFin').onchange=function(){if(this.value){D.s.fin=tm(this.value);persist();render()}};
 $('bShow').onclick=function(){$('bk').value=JSON.stringify(D)};
 $('bCopy').onclick=function(){
   $('bk').value=JSON.stringify(D);$('bk').select();
@@ -150,12 +229,12 @@ $('bRest').onclick=function(){
   try{
     var p=JSON.parse($('bk').value);
     if(!p||typeof p.d!=='object'||typeof p.s!=='object')throw 0;
-    D={s:Object.assign(D.s,p.s),d:p.d};save();render();$('bk').value='復元しました';
+    D={s:Object.assign(D.s,p.s),d:p.d};persist();loadDraft();render();$('bk').value='復元しました';
   }catch(e){$('bk').value='形式が正しくありません。バックアップ文字列を貼り付けてから押してください。'}
 };
 function csv(sep){
   var L=[['日付','帰社時刻','退勤時刻','残業時間'].join(sep)];
-  pk().forEach(function(k){var x=D.d[k],c=calc(x);L.push([k,x.out||'',x.end||'',c?hm(c.ot):''].join(sep))});
+  keysIn(rangeFor(vm)).forEach(function(k){var x=D.d[k],c=calc(x);L.push([k,x.out||'',x.end||'',c?hm(c.ot):''].join(sep))});
   return L.join('\r\n');
 }
 function msg(t){$('exMsg').textContent=t}
@@ -165,15 +244,6 @@ function cp(t){
 }
 $('bCsv').onclick=function(){cp(csv(','))};
 $('bTsv').onclick=function(){cp(csv('\t'))};
-$('bDl').onclick=async function(){
-  var t=csv(',');$('ex').value=t;
-  try{
-    var dl=window.claude&&await window.claude.use('downloads');
-    if(!dl){msg('この画面では保存できません。「CSVをコピー」を使ってください');return}
-    var y=vm.getFullYear(),m=vm.getMonth()+1;
-    await dl.save({filename:'zangyo_'+y+'-'+pad(m)+'-20.csv',data:'\uFEFF'+t});
-    msg('保存しました');
-  }catch(e){msg(e&&e.code==='declined'?'キャンセルしました':'保存できませんでした。「CSVをコピー」を使ってください')}
-};
+loadDraft();
 render();
 </script></body></html>
