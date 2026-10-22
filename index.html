@@ -5,7 +5,9 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="残業記録">
 <title>残業記録</title>
-  <link rel="apple-touch-icon" href="icon.png">
+<link rel="apple-touch-icon" href="icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="manifest" href="manifest.json">
 <style>
 :root{--bg:#f5f5f7;--card:#fff;--tx:#1d1d1f;--sub:#6e6e73;--ac:#0a7a5a;--ng:#b3541e;--bd:#e0e0e5;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#111;--card:#1c1c1e;--tx:#f2f2f7;--sub:#98989f;--ac:#34c79a;--ng:#f08a4b;--bd:#333}}
@@ -114,6 +116,7 @@ function $(i){return document.getElementById(i)}
 function pad(n){return String(n).padStart(2,'0')}
 function key(t){return t.getFullYear()+'-'+pad(t.getMonth()+1)+'-'+pad(t.getDate())}
 function md(k){return (+k.slice(5,7))+'/'+(+k.slice(8))}
+function wd(k){return '日月火水木金土'.charAt(new Date(k+'T00:00:00').getDay())}
 function nowHM(){var t=new Date();return pad(t.getHours())+':'+pad(t.getMinutes())}
 function nowHMS(){var t=new Date();return nowHM()+':'+pad(t.getSeconds())}
 function tm(s){var a=s.split(':');return +a[0]*60+ +a[1]}
@@ -171,14 +174,14 @@ function render(){
   else{st.className='stat';st.textContent=''}
 
   // 表示中の期間（‹ › で切り替え）
-  var r=rangeFor(vm),ks=keysIn(r).reverse();
+  var r=rangeFor(vm),ks=keysIn(r);
   $('ym').textContent=vm.getFullYear()+'年'+(vm.getMonth()+1)+'月20日締め';
   $('rg').textContent=md(r[0])+' 〜 '+md(r[1]);
   var tot=0,h='';
   ks.forEach(function(k){
     var x=D.d[k],cc=calc(x);
     if(cc&&cc.ot>0)tot+=cc.ot;
-    h+='<tr data-k="'+k+'"'+(k===sel?' class="me"':'')+'><td>'+md(k)+'</td><td>'+(x.out||'–')+'</td><td>'+(x.end||'–')+'</td><td>'+(cc?hm(cc.s):'–')+'</td><td class="ot '+(cc&&cc.ot>0?'pos':'neg')+'">'+(cc?sg(cc.ot):'–')+'</td></tr>';
+    h+='<tr data-k="'+k+'"'+(k===sel?' class="me"':'')+'><td>'+md(k)+'（'+wd(k)+'）</td><td>'+(x.out||'–')+'</td><td>'+(x.end||'–')+'</td><td>'+(cc?hm(cc.s):'–')+'</td><td class="ot '+(cc&&cc.ot>0?'pos':'neg')+'">'+(cc?sg(cc.ot):'–')+'</td></tr>';
   });
   $('rows').innerHTML=h||'<tr><td colspan="5" class="sub">記録がありません</td></tr>';
   $('tot').textContent=hm(tot);
